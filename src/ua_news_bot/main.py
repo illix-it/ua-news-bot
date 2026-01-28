@@ -1,11 +1,24 @@
+import asyncio
+
 from ua_news_bot.config import load_settings
+from ua_news_bot.telegram_client import TelegramClient
+
+
+def build_test_message() -> str:
+    return (
+        "Test message from ua-news-bot ✅\n\nIf you see this in the channel, Bot API posting works."
+    )
+
+
+async def run() -> None:
+    settings = load_settings()
+    tg = TelegramClient(settings.telegram_bot_token)
+    await tg.send_message(settings.telegram_chat_id, build_test_message())
+    print("Message sent ✅")
 
 
 def main() -> None:
-    settings = load_settings()
-    print("ua-news-bot is ready")
-    print(f"BOT token present: {bool(settings.telegram_bot_token)}")
-    print(f"CHAT id present: {bool(settings.telegram_chat_id)}")
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
