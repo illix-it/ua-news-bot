@@ -1,20 +1,15 @@
 import asyncio
 
-from ua_news_bot.config import load_settings
-from ua_news_bot.telegram_client import TelegramClient
-
-
-def build_test_message() -> str:
-    return (
-        "Test message from ua-news-bot ✅\n\nIf you see this in the channel, Bot API posting works."
-    )
+from ua_news_bot.sources.suspilne import fetch_latest
 
 
 async def run() -> None:
-    settings = load_settings()
-    tg = TelegramClient(settings.telegram_bot_token)
-    await tg.send_message(settings.telegram_chat_id, build_test_message())
-    print("Message sent ✅")
+    items = await fetch_latest(limit=5)
+    print(f"Fetched: {len(items)} items\n")
+
+    for i, item in enumerate(items, start=1):
+        print(f"{i}. [{item.source}] {item.title}")
+        print(f"   {item.url}\n")
 
 
 def main() -> None:
