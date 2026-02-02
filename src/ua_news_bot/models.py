@@ -21,3 +21,4 @@ class NewsItem:
     title: str
     url: str
     published_at: datetime | None
+    summary: str | None
