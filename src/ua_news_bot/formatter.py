@@ -5,76 +5,98 @@ import re
 from ua_news_bot.models import NewsItem
 
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_SAFE_SPLIT_RE = re.compile(r"[;•]\s*")
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip())
 
 
 def _split_sentences(text: str) -> list[str]:
-    parts = [p.strip() for p in _SENT_SPLIT_RE.split(text) if p.strip()]
-    return parts
+    return [_normalize(s) for s in _SENT_SPLIT_RE.split(text) if s.strip()]
+
+
+def _is_valid_bullet(text: str) -> bool:
+    # Avoid broken fragments / continuations
+    if len(text) < 35:
+        return False
+    if text[0].islower():
+        return False
+    return True
+
+
+def _norm_key(text: str) -> str:
+    return _normalize(text).casefold()
 
 
 def format_telegram_post(item: NewsItem) -> str:
-    """
-    Builds a UA post strictly from source-provided fields (title + RSS summary).
-    No new facts. No speculation.
+    # ---- title ----
+    title = _normalize(item.title)
+    MAX_TITLE = 110
 
-    Format:
-    - Title (<=110 chars)
-    - 1–2 sentences: essence
-    - 3 bullets: key facts (taken from summary sentences/fragments)
-    - Source line with link
-    Target length: 500–900 chars (best-effort in v1).
-    """
-    title = item.title.strip()
-    if len(title) > 110:
-        title = title[:107].rstrip() + "…"
+    if len(title) > MAX_TITLE:
+        cut = title[:MAX_TITLE].rstrip()
+        # Try to cut on a word boundary to avoid mid-word truncation
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0].rstrip()
+        # Fallback: if cutting by space would make it too short, keep hard cut
+        if len(cut) < 80:
+            cut = title[: MAX_TITLE - 1].rstrip()
+        title = cut + "…"
 
-    summary = (item.summary or "").strip()
+    # ---- summary ----
+    summary = _normalize(item.summary or "")
 
-    # If no summary: we can't safely invent facts.
+    bullets: list[str] = []
+
     if not summary:
         essence = "Короткий опис у RSS відсутній. Детальніше — за посиланням."
-        bullets = [
-            "Подробиці — на сайті джерела.",
-            "Офіційний матеріал за посиланням нижче.",
-            "Слідкуємо за оновленнями.",
-        ]
     else:
         sentences = _split_sentences(summary)
+        essence = " ".join(sentences[:2]).strip()
 
-        essence_sentences = sentences[:2]
-        essence = " ".join(essence_sentences).strip()
+        # primary bullets from remaining sentences
+        for s in sentences[2:]:
+            if _is_valid_bullet(s):
+                bullets.append(s)
+            if len(bullets) == 3:
+                break
 
-        bullet_candidates = sentences[2:5]
-        if len(bullet_candidates) < 3:
-            # fallback: split by semicolons/commas without adding new info
-            fragments = [f.strip() for f in re.split(r"[;•]\s*|,\s+", summary) if f.strip()]
-            bullet_candidates = (sentences[1:2] + fragments)[:3]
+        # fallback bullets from safe separators (; or •), never commas
+        if len(bullets) < 3:
+            for part in _SAFE_SPLIT_RE.split(summary):
+                part = _normalize(part)
+                if _is_valid_bullet(part) and part not in bullets:
+                    bullets.append(part)
+                if len(bullets) == 3:
+                    break
 
-        bullets = bullet_candidates[:3]
-        # Ensure bullets are non-empty and not too long
-        bullets = [b[:220].rstrip() + ("…" if len(b) > 220 else "") for b in bullets]
-        while len(bullets) < 3:
-            bullets.append("Детальніше — за посиланням.")
+        # remove bullets that duplicate essence (key-based, whitespace/case insensitive)
+        essence_key = _norm_key(essence)
+        bullets = [b for b in bullets if _norm_key(b) != essence_key]
 
-    post = (
-        f"{title}\n\n"
-        f"{essence}\n\n"
-        f"• {bullets[0]}\n"
-        f"• {bullets[1]}\n"
-        f"• {bullets[2]}\n\n"
-        f"Джерело: {item.source} {item.url}"
-    )
+    # If after dedupe there are no bullets, don't show bullet block at all.
+    if bullets:
+        # keep up to 3 bullets, but do not force-fill with repetitive fallbacks
+        bullets = bullets[:3]
+        bullets_block = "\n".join(f"• {b}" for b in bullets)
+        post = f"{title}\n\n{essence}\n\n{bullets_block}\n\nДжерело: {item.source} {item.url}"
+    else:
+        post = f"{title}\n\n{essence}\n\nДжерело: {item.source} {item.url}"
 
-    # Best-effort length control (we won't fabricate; we only trim)
-    if len(post) > 900:
-        # trim essence first
+    # ---- length control (trim only, never add facts) ----
+    if len(post) > 900 and len(essence) > 100:
         excess = len(post) - 900
-        if excess > 0 and len(essence) > 80:
-            new_len = max(80, len(essence) - excess)
-            essence_trim = essence[:new_len].rstrip() + "…"
-            post = post.replace(essence, essence_trim, 1)
+        essence_trim = essence[: max(100, len(essence) - excess)].rstrip() + "…"
+        if bullets:
+            bullets_block = "\n".join(f"• {b}" for b in bullets)
+            post = (
+                f"{title}\n\n{essence_trim}\n\n{bullets_block}\n\nДжерело: {item.source} {item.url}"
+            )
+        else:
+            post = f"{title}\n\n{essence_trim}\n\nДжерело: {item.source} {item.url}"
 
-    # If too short, add safe generic line (not a new fact)
+    # If too short, add a single safe generic line (not a fact)
     if len(post) < 500:
         post = post.replace(
             "\n\nДжерело:",
