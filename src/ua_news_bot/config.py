@@ -13,6 +13,8 @@ class Settings(BaseModel):
     dry_run: bool = True
     ai_enabled: bool = False
 
+    poll_interval_seconds: int = 60
+
 
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -54,10 +56,16 @@ def load_settings() -> Settings:
     dry_run = _parse_bool(os.getenv("DRY_RUN"), default=True)
     ai_enabled = _parse_bool(os.getenv("AI_ENABLED"), default=False)
 
+    poll_raw = os.getenv("POLL_INTERVAL_SECONDS", "").strip()
+    poll_interval = int(poll_raw) if poll_raw.isdigit() else 60
+    if poll_interval < 10:
+        poll_interval = 10
+
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
         max_posts_per_run=max_posts,
         dry_run=dry_run,
         ai_enabled=ai_enabled,
+        poll_interval_seconds=poll_interval,
     )
