@@ -8,12 +8,29 @@ class Settings(BaseModel):
     telegram_bot_token: str
     telegram_chat_id: str
 
+    # Safety switches
+    max_posts_per_run: int = 5
+    dry_run: bool = True
+    ai_enabled: bool = False
+
+
+def _parse_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    v = value.strip().casefold()
+    if v in {"1", "true", "yes", "y", "on"}:
+        return True
+    if v in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
 
 def load_settings() -> Settings:
     """
     Loads settings from environment (.env is supported for local dev).
 
-    Fail-fast: raises ValueError if required settings are missing.
+    Fail-fast for required Telegram settings.
+    Safety switches have defaults.
     """
     load_dotenv()
 
@@ -29,4 +46,18 @@ def load_settings() -> Settings:
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
-    return Settings(telegram_bot_token=token, telegram_chat_id=chat_id)
+    max_posts_raw = os.getenv("MAX_POSTS_PER_RUN", "").strip()
+    max_posts = int(max_posts_raw) if max_posts_raw.isdigit() else 5
+    if max_posts < 0:
+        max_posts = 0
+
+    dry_run = _parse_bool(os.getenv("DRY_RUN"), default=True)
+    ai_enabled = _parse_bool(os.getenv("AI_ENABLED"), default=False)
+
+    return Settings(
+        telegram_bot_token=token,
+        telegram_chat_id=chat_id,
+        max_posts_per_run=max_posts,
+        dry_run=dry_run,
+        ai_enabled=ai_enabled,
+    )

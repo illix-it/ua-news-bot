@@ -7,24 +7,38 @@ from ua_news_bot.formatter import format_telegram_post
 from ua_news_bot.sources.suspilne import SuspilneSource
 from ua_news_bot.telegram_client import TelegramClient
 
-POST_LIMIT = 3  # safety for v1
-
 
 async def run() -> None:
     settings = load_settings()
-    tg = TelegramClient(settings.telegram_bot_token)
+
+    print(
+        f"[CFG] dry_run={settings.dry_run} "
+        f"max_posts_per_run={settings.max_posts_per_run} "
+        f"ai_enabled={settings.ai_enabled}"
+    )
 
     sources = [SuspilneSource()]
-    items = await fetch_all_latest(sources, per_source_limit=20, dedup=SeenStore())
+    items = await fetch_all_latest(sources, per_source_limit=30, dedup=SeenStore())
 
-    to_post = items[:POST_LIMIT]
-    print(f"Fetched: {len(items)}; posting: {len(to_post)}")
+    to_process = items[: settings.max_posts_per_run]
+    print(f"[FETCH] fetched={len(items)} will_process={len(to_process)}")
 
-    for item in to_post:
+    if settings.dry_run:
+        for i, item in enumerate(to_process, start=1):
+            text = format_telegram_post(item)
+            print(f"\n--- DRY RUN POST #{i} ---\n{text}\n")
+        print("[DONE] dry-run completed ✅")
+        return
+
+    tg = TelegramClient(settings.telegram_bot_token)
+
+    sent = 0
+    for item in to_process:
         text = format_telegram_post(item)
         await tg.send_message(settings.telegram_chat_id, text)
+        sent += 1
 
-    print("Done ✅")
+    print(f"[POST] sent={sent} ✅")
 
 
 def main() -> None:
