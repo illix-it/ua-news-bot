@@ -15,6 +15,9 @@ class Settings(BaseModel):
 
     poll_interval_seconds: int = 60
 
+    init_skip_existing: bool = True
+    init_post_latest: bool = True
+
 
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -61,6 +64,9 @@ def load_settings() -> Settings:
     if poll_interval < 10:
         poll_interval = 10
 
+    init_skip_existing = _parse_bool(os.getenv("INIT_SKIP_EXISTING"), default=True)
+    init_post_latest = _parse_bool(os.getenv("INIT_POST_LATEST"), default=True)
+
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
@@ -68,4 +74,6 @@ def load_settings() -> Settings:
         dry_run=dry_run,
         ai_enabled=ai_enabled,
         poll_interval_seconds=poll_interval,
+        init_skip_existing=init_skip_existing,
+        init_post_latest=init_post_latest,
     )

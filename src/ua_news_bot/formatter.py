@@ -26,22 +26,32 @@ def _is_valid_bullet(text: str) -> bool:
 
 
 def _norm_key(text: str) -> str:
+    # Normalize for comparisons: whitespace + case
     return _normalize(text).casefold()
+
+
+def _contains_normalized(haystack: str, needle: str) -> bool:
+    """
+    True if normalized needle is contained in normalized haystack.
+    Used to avoid bullets that repeat essence or previous bullets.
+    """
+    n = _norm_key(needle)
+    if not n:
+        return False
+    return n in _norm_key(haystack)
 
 
 def format_telegram_post(item: NewsItem) -> str:
     # ---- title ----
     title = _normalize(item.title)
     MAX_TITLE = 110
-
     if len(title) > MAX_TITLE:
         cut = title[:MAX_TITLE].rstrip()
-        # Try to cut on a word boundary to avoid mid-word truncation
+        # cut on word boundary if possible
         if " " in cut:
-            cut = cut.rsplit(" ", 1)[0].rstrip()
-        # Fallback: if cutting by space would make it too short, keep hard cut
-        if len(cut) < 80:
-            cut = title[: MAX_TITLE - 1].rstrip()
+            cut2 = cut.rsplit(" ", 1)[0].rstrip()
+            if len(cut2) >= 80:
+                cut = cut2
         title = cut + "…"
 
     # ---- summary ----
@@ -50,6 +60,7 @@ def format_telegram_post(item: NewsItem) -> str:
     bullets: list[str] = []
 
     if not summary:
+        # Important: no "детальніше" here to avoid duplicates later
         essence = "Короткий опис у RSS відсутній."
     else:
         sentences = _split_sentences(summary)
@@ -57,8 +68,14 @@ def format_telegram_post(item: NewsItem) -> str:
 
         # primary bullets from remaining sentences
         for s in sentences[2:]:
-            if _is_valid_bullet(s):
-                bullets.append(s)
+            if not _is_valid_bullet(s):
+                continue
+            # avoid repeats of essence and earlier bullets
+            if _contains_normalized(s, essence):
+                continue
+            if any(_contains_normalized(s, b) or _contains_normalized(b, s) for b in bullets):
+                continue
+            bullets.append(s)
             if len(bullets) == 3:
                 break
 
@@ -66,25 +83,31 @@ def format_telegram_post(item: NewsItem) -> str:
         if len(bullets) < 3:
             for part in _SAFE_SPLIT_RE.split(summary):
                 part = _normalize(part)
-                if _is_valid_bullet(part) and part not in bullets:
-                    bullets.append(part)
+                if not _is_valid_bullet(part):
+                    continue
+                if _contains_normalized(part, essence):
+                    continue
+                if any(
+                    _contains_normalized(part, b) or _contains_normalized(b, part) for b in bullets
+                ):
+                    continue
+                bullets.append(part)
                 if len(bullets) == 3:
                     break
 
-        # remove bullets that duplicate essence (key-based, whitespace/case insensitive)
+        # final: remove exact duplicates of essence (case/space-insensitive)
         essence_key = _norm_key(essence)
         bullets = [b for b in bullets if _norm_key(b) != essence_key]
 
-    # If after dedupe there are no bullets, don't show bullet block at all.
+    # Build post
     if bullets:
-        # keep up to 3 bullets, but do not force-fill with repetitive fallbacks
         bullets = bullets[:3]
         bullets_block = "\n".join(f"• {b}" for b in bullets)
         post = f"{title}\n\n{essence}\n\n{bullets_block}\n\nДжерело: {item.source} {item.url}"
     else:
         post = f"{title}\n\n{essence}\n\nДжерело: {item.source} {item.url}"
 
-    # ---- length control (trim only, never add facts) ----
+    # If too long: trim essence only (never add facts)
     if len(post) > 900 and len(essence) > 100:
         excess = len(post) - 900
         essence_trim = essence[: max(100, len(essence) - excess)].rstrip() + "…"
@@ -96,7 +119,7 @@ def format_telegram_post(item: NewsItem) -> str:
         else:
             post = f"{title}\n\n{essence_trim}\n\nДжерело: {item.source} {item.url}"
 
-    # If too short, add a single safe generic line (not a fact)
+    # If too short: add a single safe generic line once
     if len(post) < 500:
         post = post.replace(
             "\n\nДжерело:",
