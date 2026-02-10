@@ -50,7 +50,7 @@ def format_telegram_post(item: NewsItem) -> str:
     bullets: list[str] = []
 
     if not summary:
-        essence = "Короткий опис у RSS відсутній. Детальніше — за посиланням."
+        essence = "Короткий опис у RSS відсутній."
     else:
         sentences = _split_sentences(summary)
         essence = " ".join(sentences[:2]).strip()

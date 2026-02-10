@@ -17,26 +17,33 @@ async def run_once(
     dry_run: bool,
 ) -> int:
     sources = [SuspilneSource()]
-
-    # Fetch recent items (RSS usually returns latest N)
     items = await fetch_all_latest(sources, per_source_limit=30, dedup=None)
 
-    # Apply persisted dedup by URL (forever)
-    new_items = [x for x in items if dedup.is_new(x.url)]
-    to_post = new_items[:max_posts]
+    # Only select items not seen yet (but do NOT mark them yet)
+    candidates = [x for x in items if not dedup.has(x.url)]
+    to_post = candidates[:max_posts]
 
-    print(f"[FETCH] fetched={len(items)} new={len(new_items)} will_post={len(to_post)}")
+    print(f"[FETCH] fetched={len(items)} candidates={len(candidates)} will_post={len(to_post)}")
 
     if dry_run:
         for i, item in enumerate(to_post, start=1):
             text = format_telegram_post(item)
             print(f"\n--- DRY RUN POST #{i} ---\n{text}\n")
+
+            # Simulate successful posting to advance the queue during dry-run
+            dedup.mark_seen(item.url)
+
         return 0
 
     sent = 0
     for item in to_post:
         text = format_telegram_post(item)
+
+        # NOTE: Telegram HTML formatting requires parse_mode="HTML" in your client
         await tg.send_message(chat_id, text)
+
+        # Mark as seen only AFTER successful send
+        dedup.mark_seen(item.url)
         sent += 1
 
     return sent
@@ -65,12 +72,11 @@ async def run_forever() -> None:
                     max_posts=settings.max_posts_per_run,
                     dry_run=settings.dry_run,
                 )
-                if not settings.dry_run:
-                    print(f"[POST] sent={sent} ✅")
-                else:
+                if settings.dry_run:
                     print("[DONE] dry-run cycle ✅")
+                else:
+                    print(f"[POST] sent={sent} ✅")
             except Exception as e:
-                # keep process alive; later we’ll replace with structured logging
                 print(f"[ERR] {type(e).__name__}: {e}")
 
             await asyncio.sleep(settings.poll_interval_seconds)

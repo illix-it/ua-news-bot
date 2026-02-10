@@ -9,7 +9,10 @@ class SQLiteSeenStore:
     """
     Persistent dedup store using SQLite.
 
-    Stores seen URLs forever (v1). This prevents reposts across restarts.
+    IMPORTANT:
+    - `has(url)` checks if URL was seen.
+    - `mark_seen(url)` stores URL as seen.
+    We mark URLs as seen ONLY after we actually post (or intentionally skip).
     """
 
     def __init__(self, db_path: str = "data/seen.sqlite3") -> None:
@@ -27,17 +30,17 @@ class SQLiteSeenStore:
         )
         self._conn.commit()
 
-    def is_new(self, url: str) -> bool:
+    def has(self, url: str) -> bool:
         cur = self._conn.execute("SELECT 1 FROM seen WHERE url = ?", (url,))
-        if cur.fetchone() is not None:
-            return False
+        return cur.fetchone() is not None
 
+    def mark_seen(self, url: str) -> None:
+        # INSERT OR IGNORE makes it idempotent
         self._conn.execute(
-            "INSERT INTO seen (url, seen_at) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO seen (url, seen_at) VALUES (?, ?)",
             (url, int(time())),
         )
         self._conn.commit()
-        return True
 
     def close(self) -> None:
         self._conn.close()
