@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from ua_news_bot.aggregator import fetch_all_latest
 from ua_news_bot.config import load_settings
@@ -8,24 +9,56 @@ from ua_news_bot.sources.suspilne import SuspilneSource
 from ua_news_bot.telegram_client import TelegramClient
 
 
+def _build_raw_text(title: str, summary: str | None) -> str:
+    s = (summary or "").strip()
+    if s:
+        return f"{title}\n\n{s}"
+    return title
+
+
+def _is_balanced_html(text: str) -> bool:
+    tags = ["b", "i", "u", "blockquote"]
+    for t in tags:
+        if text.count(f"<{t}>") != text.count(f"</{t}>"):
+            return False
+    return True
+
+
+def _validate_ai_post(text: str) -> bool:
+    if not text:
+        return False
+    if not _is_balanced_html(text):
+        return False
+
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    first = next((ln for ln in lines if ln.strip()), "")
+    if not (first.startswith("<b>") and "</b>" in first):
+        return False
+
+    bullet_lines = [ln for ln in lines if ln.strip().startswith("• ")]
+    if len(bullet_lines) < 3:
+        return False
+
+    if len(text) < 200:
+        return False
+
+    return True
+
+
 async def run_once(
-    *,
-    tg: TelegramClient,
-    chat_id: str,
-    dedup: SQLiteSeenStore,
-    max_posts: int,
-    dry_run: bool,
+        *,
+        tg: TelegramClient,
+        settings,
+        dedup: SQLiteSeenStore,
 ) -> int:
     sources = [SuspilneSource()]
     items = await fetch_all_latest(sources, per_source_limit=30, dedup=None)
 
-    # Only select items not seen yet (but do NOT mark them yet)
     candidates = [x for x in items if not dedup.has(x.url)]
-    # We only want the freshest item(s) and do NOT want to "catch up" backlog.
-    to_post = candidates[:max_posts]
+    to_post = candidates[: settings.max_posts_per_run]
 
-    # Mark the rest as seen to avoid slowly draining old backlog over time.
-    for it in candidates[max_posts:]:
+    # Skip backlog: mark extras as seen so we only post the freshest.
+    for it in candidates[settings.max_posts_per_run :]:
         dedup.mark_seen(it.url)
 
     print(
@@ -33,26 +66,66 @@ async def run_once(
         f"will_post={len(to_post)} skipped_backlog={max(0, len(candidates) - len(to_post))}"
     )
 
-    if dry_run:
-        for i, item in enumerate(to_post, start=1):
-            text = format_telegram_post(item)
-            print(f"\n--- DRY RUN POST #{i} ---\n{text}\n")
-
-            # Simulate successful posting to advance the queue during dry-run
-            dedup.mark_seen(item.url)
-
+    if not to_post:
         return 0
+
+    enhancer = None
+    if settings.ai_enabled and settings.ai_provider == "gemini":
+        from ua_news_bot.ai.gemini_enhancer import GeminiConfig, GeminiEnhancer
+
+        if not settings.gemini_api_key:
+            raise RuntimeError("AI_ENABLED=true but GEMINI_API_KEY is missing")
+
+        enhancer = GeminiEnhancer(
+            GeminiConfig(
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+                channel_language=settings.channel_language,
+            )
+        )
 
     sent = 0
     for item in to_post:
-        text = format_telegram_post(item)
+        try:
+            if enhancer is not None:
+                raw = _build_raw_text(item.title, item.summary)
+                ai_text = enhancer.enhance(raw)
 
-        # NOTE: Telegram HTML formatting requires parse_mode="HTML" in your client
-        await tg.send_message(chat_id, text)
+                if ai_text.strip().upper() == "SKIP":
+                    print(f"[AI] SKIP: {item.url}")
+                    dedup.mark_seen(item.url)
+                    continue
 
-        # Mark as seen only AFTER successful send
-        dedup.mark_seen(item.url)
-        sent += 1
+                if not _validate_ai_post(ai_text):
+                    raise ValueError("AI output failed validation")
+
+                text = f"{ai_text}\n\nДжерело: {item.source} {item.url}"
+            else:
+                text = format_telegram_post(item)
+
+            if settings.dry_run:
+                print(f"\n--- DRY RUN POST ---\n{text}\n")
+                if settings.dry_run_mark_seen:
+                    dedup.mark_seen(item.url)
+                continue
+
+            await tg.send_message(settings.telegram_chat_id, text)
+            dedup.mark_seen(item.url)
+            sent += 1
+
+        except Exception as e:
+            print(f"[ERR] {type(e).__name__}: {e} (fallback formatter)")
+
+            fallback = format_telegram_post(item)
+            if settings.dry_run:
+                print(f"\n--- DRY RUN FALLBACK ---\n{fallback}\n")
+                if settings.dry_run_mark_seen:
+                    dedup.mark_seen(item.url)
+                continue
+
+            await tg.send_message(settings.telegram_chat_id, fallback)
+            dedup.mark_seen(item.url)
+            sent += 1
 
     return sent
 
@@ -64,50 +137,26 @@ async def run_forever() -> None:
         f"[CFG] dry_run={settings.dry_run} "
         f"max_posts_per_run={settings.max_posts_per_run} "
         f"poll_interval_seconds={settings.poll_interval_seconds} "
-        f"ai_enabled={settings.ai_enabled}"
+        f"ai_enabled={settings.ai_enabled} ai_provider={settings.ai_provider}"
     )
+    if settings.ai_enabled and settings.ai_provider == "gemini":
+        print(f"[AI] model={settings.gemini_model}")
+
+    # Optional: reset dedup for local testing
+    if settings.reset_dedup_on_start:
+        try:
+            Path(settings.dedup_db_path).unlink(missing_ok=True)
+            print(f"[DEDUP] reset: deleted {settings.dedup_db_path}")
+        except Exception as e:
+            print(f"[DEDUP] reset failed: {type(e).__name__}: {e}")
 
     tg = TelegramClient(settings.telegram_bot_token)
-    dedup = SQLiteSeenStore()
-
-    # Warm start: skip backlog so we only post truly new items going forward.
-    if settings.init_skip_existing:
-        sources = [SuspilneSource()]
-        items = await fetch_all_latest(sources, per_source_limit=30, dedup=None)
-
-        if items and settings.init_post_latest:
-            latest = items[0]  # assuming aggregator returns newest-first
-            text = format_telegram_post(latest)
-
-            print(f"[INIT] latest: {latest.title} ({latest.url})")
-            if settings.dry_run:
-                print(f"\n--- INIT PREVIEW ---\n{text}\n")
-            else:
-                await tg.send_message(settings.telegram_chat_id, text)
-                print("[INIT] posted latest ✅")
-
-            # Mark it as seen so it won't be reposted in the loop
-            dedup.mark_seen(latest.url)
-
-        marked = 0
-        for it in items:
-            if not dedup.has(it.url):
-                dedup.mark_seen(it.url)
-                marked += 1
-
-        print(f"[INIT] skip-existing enabled: marked_seen={marked} (backlog skipped)")
-        print("[INIT] IMPORTANT: set INIT_SKIP_EXISTING=false after first run")
+    dedup = SQLiteSeenStore(settings.dedup_db_path)
 
     try:
         while True:
             try:
-                sent = await run_once(
-                    tg=tg,
-                    chat_id=settings.telegram_chat_id,
-                    dedup=dedup,
-                    max_posts=settings.max_posts_per_run,
-                    dry_run=settings.dry_run,
-                )
+                sent = await run_once(tg=tg, settings=settings, dedup=dedup)
                 if settings.dry_run:
                     print("[DONE] dry-run cycle ✅")
                 else:
