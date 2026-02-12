@@ -13,7 +13,7 @@ class TelegramClient:
 
     async def send_message(self, chat_id: str, text: str) -> None:
         """
-        Sends a text message via Telegram Bot API.
+        Sends a text message via Telegram Bot API (HTML parse mode enabled).
 
         Raises TelegramAPIError on non-OK responses from Telegram.
         """
@@ -21,6 +21,7 @@ class TelegramClient:
         payload = {
             "chat_id": chat_id,
             "text": text,
+            "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
 
