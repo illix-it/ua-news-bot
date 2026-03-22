@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from io import BytesIO
+
 import httpx
 
 
@@ -12,11 +14,6 @@ class TelegramClient:
         self._base_url = f"https://api.telegram.org/bot{token}"
 
     async def send_message(self, chat_id: str, text: str) -> None:
-        """
-        Sends a text message via Telegram Bot API (HTML parse mode enabled).
-
-        Raises TelegramAPIError on non-OK responses from Telegram.
-        """
         url = f"{self._base_url}/sendMessage"
         payload = {
             "chat_id": chat_id,
@@ -34,3 +31,25 @@ class TelegramClient:
 
         if not data.get("ok", False):
             raise TelegramAPIError(f"Telegram API error: {data}")
+
+    async def send_photo(self, chat_id: str, photo_bytes: bytes, caption: str) -> None:
+        url = f"{self._base_url}/sendPhoto"
+
+        files = {
+            "photo": ("image.jpg", BytesIO(photo_bytes), "image/jpeg"),
+        }
+        data = {
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, data=data, files=files)
+            payload = resp.json()
+
+        if not resp.is_success:
+            raise TelegramAPIError(f"HTTP {resp.status_code}: {payload}")
+
+        if not payload.get("ok", False):
+            raise TelegramAPIError(f"Telegram API error: {payload}")

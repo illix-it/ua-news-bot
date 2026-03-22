@@ -18,7 +18,7 @@ class Settings(BaseModel):
     # Polling
     poll_interval_seconds: int = 60
 
-    # Warm start (one-time)
+    # Warm start
     init_skip_existing: bool = False
     init_post_latest: bool = False
 
@@ -30,8 +30,13 @@ class Settings(BaseModel):
     # AI / Gemini
     ai_provider: str = "gemini"
     gemini_api_key: str | None = None
+    gemini_api_keys: str = ""
     gemini_model: str = "gemini-2.5-flash"
     channel_language: str = "uk"
+
+    # CTA
+    channel_cta_text: str = ""
+    channel_cta_url: str = ""
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -46,9 +51,6 @@ def _parse_bool(value: str | None, default: bool) -> bool:
 
 
 def load_settings() -> Settings:
-    """
-    Loads settings from environment (.env supported for local dev).
-    """
     load_dotenv()
 
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -78,15 +80,18 @@ def load_settings() -> Settings:
     init_skip_existing = _parse_bool(os.getenv("INIT_SKIP_EXISTING"), default=False)
     init_post_latest = _parse_bool(os.getenv("INIT_POST_LATEST"), default=False)
 
-    # Dedup testing controls
     dedup_db_path = (os.getenv("DEDUP_DB_PATH") or "").strip() or "data/seen.sqlite3"
     reset_dedup_on_start = _parse_bool(os.getenv("RESET_DEDUP_ON_START"), default=False)
     dry_run_mark_seen = _parse_bool(os.getenv("DRY_RUN_MARK_SEEN"), default=True)
 
     ai_provider = os.getenv("AI_PROVIDER", "gemini").strip() or "gemini"
     gemini_api_key = (os.getenv("GEMINI_API_KEY") or "").strip() or None
+    gemini_api_keys = (os.getenv("GEMINI_API_KEYS") or "").strip()
     gemini_model = (os.getenv("GEMINI_MODEL") or "").strip() or "gemini-2.5-flash"
     channel_language = (os.getenv("CHANNEL_LANGUAGE") or "").strip() or "uk"
+
+    channel_cta_text = (os.getenv("CHANNEL_CTA_TEXT") or "").strip()
+    channel_cta_url = (os.getenv("CHANNEL_CTA_URL") or "").strip()
 
     return Settings(
         telegram_bot_token=token,
@@ -102,6 +107,9 @@ def load_settings() -> Settings:
         dry_run_mark_seen=dry_run_mark_seen,
         ai_provider=ai_provider,
         gemini_api_key=gemini_api_key,
+        gemini_api_keys=gemini_api_keys,
         gemini_model=gemini_model,
         channel_language=channel_language,
+        channel_cta_text=channel_cta_text,
+        channel_cta_url=channel_cta_url,
     )
