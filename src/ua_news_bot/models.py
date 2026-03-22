@@ -7,18 +7,14 @@ from enum import StrEnum
 
 class Source(StrEnum):
     SUSPILNE = "Суспільне"
-    UKRINFORM = "Укрінформ"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class NewsItem:
-    """
-    Normalized representation of a news item from any source.
-    This is *not* the final Telegram post yet.
-    """
-
     source: Source
     title: str
     url: str
-    published_at: datetime | None
-    summary: str | None
+    published_at: datetime | None = None
+    summary: str | None = None
+    image_urls: tuple[str, ...] = ()
+    video_urls: tuple[str, ...] = ()
