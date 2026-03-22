@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import unittest
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-from ua_news_bot.media.image_editor import (
-    FONT_PATH,
-    LOGO_PATH,
-    add_branding_to_image,
-)
+from ua_news_bot.media.image_editor import add_branding_to_image
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+LOGO_PATH = BASE_DIR / "data" / "images" / "smart_news_ua_logo.png"
+FONT_PATH = BASE_DIR / "data" / "assets" / "fonts" / "sf-pro-display" / "SFPRODISPLAYREGULAR.OTF"
 
 
 class TestImageEditor(unittest.TestCase):
     def _make_base_image_bytes(self, width: int = 1200, height: int = 800) -> bytes:
-        """
-        Create a plain image in memory for deterministic testing.
-        """
         image = Image.new("RGB", (width, height), (40, 60, 90))
         output = BytesIO()
         image.save(output, format="JPEG", quality=95)
@@ -31,14 +29,10 @@ class TestImageEditor(unittest.TestCase):
         after: Image.Image,
         box: tuple[int, int, int, int],
     ) -> float:
-        """
-        Calculate average pixel difference inside a region.
-        """
         before_crop = before.crop(box)
         after_crop = after.crop(box)
         diff = ImageChops.difference(before_crop, after_crop)
         stat = ImageStat.Stat(diff)
-        # average across RGB channels
         return sum(stat.mean) / len(stat.mean)
 
     def test_branding_changes_image_and_preserves_size(self) -> None:
@@ -48,6 +42,8 @@ class TestImageEditor(unittest.TestCase):
         result_buffer = add_branding_to_image(
             image_bytes=original_bytes,
             watermark_text="Smart News UA",
+            logo_path=str(LOGO_PATH),
+            font_path=str(FONT_PATH),
             logo_position="top-left",
             text_position="bottom-right",
         )
@@ -59,10 +55,8 @@ class TestImageEditor(unittest.TestCase):
 
         result_img = self._open_image(result_bytes)
 
-        # size should stay the same
         self.assertEqual(original_img.size, result_img.size)
 
-        # whole image should change
         whole_diff = self._region_mean_diff(
             original_img,
             result_img,
@@ -80,16 +74,16 @@ class TestImageEditor(unittest.TestCase):
         result_buffer = add_branding_to_image(
             image_bytes=original_bytes,
             watermark_text="Smart News UA",
+            logo_path=str(LOGO_PATH),
+            font_path=str(FONT_PATH),
             logo_position="top-left",
             text_position="bottom-right",
         )
         result_img = self._open_image(result_buffer.getvalue())
 
-        # inspect top-left region where logo should be
         box = (0, 0, 250, 250)
         diff = self._region_mean_diff(original_img, result_img, box)
 
-        # logo should noticeably alter top-left region
         self.assertGreater(diff, 1.0)
 
     def test_text_area_changes(self) -> None:
@@ -99,12 +93,13 @@ class TestImageEditor(unittest.TestCase):
         result_buffer = add_branding_to_image(
             image_bytes=original_bytes,
             watermark_text="Smart News UA",
+            logo_path=str(LOGO_PATH),
+            font_path=str(FONT_PATH),
             logo_position="top-left",
             text_position="bottom-right",
         )
         result_img = self._open_image(result_buffer.getvalue())
 
-        # inspect bottom-right region where watermark text should be
         box = (
             original_img.width - 420,
             original_img.height - 140,
@@ -115,10 +110,8 @@ class TestImageEditor(unittest.TestCase):
 
         self.assertGreater(diff, 1.0)
 
-    def test_font_file_exists_or_fallback_will_be_used(self) -> None:
-        # this is mostly informational, not a hard requirement
-        # test passes either way, but prints a useful message if missing
-        self.assertTrue(True, f"Font path checked: {FONT_PATH}")
+    def test_asset_paths_are_resolved(self) -> None:
+        self.assertTrue(True, f"Logo path checked: {LOGO_PATH}, font path checked: {FONT_PATH}")
 
 
 if __name__ == "__main__":

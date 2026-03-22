@@ -57,6 +57,36 @@ def _extract_image_urls(entry: Any) -> tuple[str, ...]:
     return tuple(unique)
 
 
+def _extract_video_urls(entry: Any) -> tuple[str, ...]:
+    urls: list[str] = []
+
+    media_content = entry.get("media_content") or []
+    for item in media_content:
+        url = (item.get("url") or "").strip()
+        media_type = (item.get("type") or "").lower()
+        if url and media_type.startswith("video/"):
+            urls.append(url)
+
+    links = entry.get("links") or []
+    for link in links:
+        url = (link.get("href") or "").strip()
+        media_type = (link.get("type") or "").lower()
+        rel = (link.get("rel") or "").lower()
+        if url and media_type.startswith("video/"):
+            urls.append(url)
+        elif url and rel == "enclosure" and media_type.startswith("video/"):
+            urls.append(url)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url not in seen:
+            unique.append(url)
+            seen.add(url)
+
+    return tuple(unique)
+
+
 class SuspilneSource:
     name = "Суспільне"
 
@@ -78,6 +108,7 @@ class SuspilneSource:
             raw_summary = entry.get("summary") or entry.get("description") or ""
             summary = clean_text(raw_summary) if raw_summary else None
             image_urls = _extract_image_urls(entry)
+            video_urls = _extract_video_urls(entry)
 
             items.append(
                 NewsItem(
@@ -87,7 +118,7 @@ class SuspilneSource:
                     published_at=_parse_published(entry),
                     summary=summary,
                     image_urls=image_urls,
-                    video_urls=(),
+                    video_urls=video_urls,
                 )
             )
 
