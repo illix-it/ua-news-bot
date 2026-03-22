@@ -10,33 +10,38 @@ class Settings(BaseModel):
     telegram_bot_token: str
     telegram_chat_id: str
 
-    # Safety switches
     max_posts_per_run: int = 1
     dry_run: bool = True
     ai_enabled: bool = False
 
-    # Polling
     poll_interval_seconds: int = 60
 
-    # Warm start
     init_skip_existing: bool = False
     init_post_latest: bool = False
 
-    # Dedup (dev/testing)
     dedup_db_path: str = "data/seen.sqlite3"
     reset_dedup_on_start: bool = False
     dry_run_mark_seen: bool = True
 
-    # AI / Gemini
     ai_provider: str = "gemini"
     gemini_api_key: str | None = None
     gemini_api_keys: str = ""
     gemini_model: str = "gemini-2.5-flash"
     channel_language: str = "uk"
 
-    # CTA
     channel_cta_text: str = ""
     channel_cta_url: str = ""
+
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
+
+    watermark_text: str = "Smart News UA"
+    watermark_logo_path: str = "data/images/smart_news_ua_logo.png"
+
+    ytdlp_enabled: bool = False
+    ytdlp_bin: str = "yt-dlp"
+
+    video_source_text: str = "🎥 Відео: Суспільне"
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -93,6 +98,19 @@ def load_settings() -> Settings:
     channel_cta_text = (os.getenv("CHANNEL_CTA_TEXT") or "").strip()
     channel_cta_url = (os.getenv("CHANNEL_CTA_URL") or "").strip()
 
+    ffmpeg_bin = (os.getenv("FFMPEG_BIN") or "").strip() or "ffmpeg"
+    ffprobe_bin = (os.getenv("FFPROBE_BIN") or "").strip() or "ffprobe"
+
+    watermark_text = (os.getenv("WATERMARK_TEXT") or "").strip() or "Smart News UA"
+    watermark_logo_path = (
+        os.getenv("WATERMARK_LOGO_PATH") or ""
+    ).strip() or "data/images/smart_news_ua_logo.png"
+
+    ytdlp_enabled = _parse_bool(os.getenv("YTDLP_ENABLED"), default=False)
+    ytdlp_bin = (os.getenv("YTDLP_BIN") or "").strip() or "yt-dlp"
+
+    video_source_text = (os.getenv("VIDEO_SOURCE_TEXT") or "").strip() or "🎥 Відео: Суспільне"
+
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
@@ -112,4 +130,11 @@ def load_settings() -> Settings:
         channel_language=channel_language,
         channel_cta_text=channel_cta_text,
         channel_cta_url=channel_cta_url,
+        ffmpeg_bin=ffmpeg_bin,
+        ffprobe_bin=ffprobe_bin,
+        watermark_text=watermark_text,
+        watermark_logo_path=watermark_logo_path,
+        ytdlp_enabled=ytdlp_enabled,
+        ytdlp_bin=ytdlp_bin,
+        video_source_text=video_source_text,
     )

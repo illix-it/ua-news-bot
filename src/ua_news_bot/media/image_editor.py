@@ -7,9 +7,9 @@ from typing import Literal
 from PIL import Image, ImageDraw, ImageFont
 
 BASE_DIR = Path(__file__).resolve().parents[3]
-
-LOGO_PATH = BASE_DIR / "data" / "images" / "smart_news_ua_logo-modified.png"
-FONT_PATH = BASE_DIR / "data" / "assets" / "fonts" / "sf-pro-display" / "SFPRODISPLAYREGULAR.OTF"
+DEFAULT_FONT_PATH = (
+    BASE_DIR / "data" / "assets" / "fonts" / "sf-pro-display" / "SFPRODISPLAYREGULAR.OTF"
+)
 
 
 def _get_position(
@@ -31,7 +31,9 @@ def _get_position(
 
 def add_branding_to_image(
     image_bytes: bytes,
-    watermark_text: str = "@smart_news_ua",
+    watermark_text: str,
+    logo_path: str,
+    font_path: str | None = None,
     logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left",
     text_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "bottom-right",
     logo_opacity: float = 0.9,
@@ -42,9 +44,11 @@ def add_branding_to_image(
     layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
 
+    font_file = Path(font_path) if font_path else DEFAULT_FONT_PATH
+
     font_size = max(22, int(image.width * 0.038))
     try:
-        font = ImageFont.truetype(str(FONT_PATH), font_size)
+        font = ImageFont.truetype(str(font_file), font_size)
     except OSError:
         font = ImageFont.load_default()
 
@@ -78,9 +82,10 @@ def add_branding_to_image(
         fill=text_fill,
     )
 
-    if LOGO_PATH.exists():
+    logo_file = Path(logo_path)
+    if logo_file.exists():
         try:
-            logo = Image.open(LOGO_PATH).convert("RGBA")
+            logo = Image.open(logo_file).convert("RGBA")
 
             logo_w = max(48, int(image.width * logo_scale))
             ratio = logo.height / logo.width

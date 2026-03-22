@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 
@@ -47,6 +48,30 @@ class TelegramClient:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, data=data, files=files)
             payload = resp.json()
+
+        if not resp.is_success:
+            raise TelegramAPIError(f"HTTP {resp.status_code}: {payload}")
+
+        if not payload.get("ok", False):
+            raise TelegramAPIError(f"Telegram API error: {payload}")
+
+    async def send_video(self, chat_id: str, video_path: str, caption: str) -> None:
+        url = f"{self._base_url}/sendVideo"
+
+        with open(video_path, "rb") as f:
+            files = {
+                "video": (Path(video_path).name, f, "video/mp4"),
+            }
+            data = {
+                "chat_id": chat_id,
+                "caption": caption,
+                "parse_mode": "HTML",
+                "supports_streaming": "true",
+            }
+
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(url, data=data, files=files)
+                payload = resp.json()
 
         if not resp.is_success:
             raise TelegramAPIError(f"HTTP {resp.status_code}: {payload}")

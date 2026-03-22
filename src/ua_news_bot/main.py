@@ -3,20 +3,24 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import tempfile
 from pathlib import Path
 
 from ua_news_bot.aggregator import fetch_all_latest
 from ua_news_bot.config import load_settings
 from ua_news_bot.dedup_sqlite import SQLiteSeenStore
 from ua_news_bot.formatter import format_telegram_post
-from ua_news_bot.media.downloader import download_image_bytes
+from ua_news_bot.media.downloader import download_bytes, download_image_bytes
 from ua_news_bot.media.image_editor import add_branding_to_image
+from ua_news_bot.media.video_editor import add_branding_to_video_file
+from ua_news_bot.media.ytdlp_downloader import download_video_with_ytdlp
 from ua_news_bot.sources.suspilne import SuspilneSource
 from ua_news_bot.telegram_client import TelegramClient
 
 _B_RE = re.compile(r"<b>.*?</b>", re.DOTALL)
 _TAG_BALANCE_TAGS = ["b", "i", "u", "blockquote", "tg-spoiler"]
 _SOURCE_LINE_RE = re.compile(r"\n\nДжерело:.*$", re.DOTALL)
+_YOUTUBE_RE = re.compile(r"(youtube\.com|youtu\.be|youtube-nocookie\.com)", re.IGNORECASE)
 
 
 def _build_ai_input(title: str, summary: str | None) -> str:
@@ -60,11 +64,17 @@ def _append_cta(text: str, cta_text: str, cta_url: str) -> str:
     return f"{text}\n\n{cta}"
 
 
+def _append_video_source_text(text: str, video_source_text: str) -> str:
+    if not video_source_text:
+        return text
+    return f"{text}\n\n{video_source_text}"
+
+
 def _remove_source_line(text: str) -> str:
     return _SOURCE_LINE_RE.sub("", text).strip()
 
 
-async def _prepare_media_photo(item) -> bytes | None:
+async def _prepare_media_photo(item, settings) -> bytes | None:
     if not item.image_urls:
         return None
 
@@ -73,12 +83,102 @@ async def _prepare_media_photo(item) -> bytes | None:
         content = await download_image_bytes(first_url, referer=item.url)
         branded = add_branding_to_image(
             image_bytes=content,
-            watermark_text="@smart_news_ua",
+            watermark_text=settings.watermark_text,
+            logo_path=settings.watermark_logo_path,
         )
         return branded.getvalue()
     except Exception as e:
         print(f"[MEDIA] image prepare failed: {e}")
         return None
+
+
+async def _prepare_direct_video(item, settings) -> str | None:
+    if not item.video_urls:
+        return None
+
+    first_url = item.video_urls[0]
+    if _YOUTUBE_RE.search(first_url):
+        return None
+
+    temp_input_path: str | None = None
+    branded_path: str | None = None
+
+    try:
+        content, content_type = await download_bytes(first_url, referer=item.url, timeout=120.0)
+        if not content_type.startswith("video/"):
+            print(f"[MEDIA] first video url is not video content-type: {content_type}")
+            return None
+
+        temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        temp_input.write(content)
+        temp_input.close()
+        temp_input_path = temp_input.name
+
+        branded_path = await add_branding_to_video_file(
+            input_video_path=temp_input_path,
+            watermark_text=settings.watermark_text,
+            logo_path=settings.watermark_logo_path,
+            ffmpeg_bin=settings.ffmpeg_bin,
+            ffprobe_bin=settings.ffprobe_bin,
+        )
+        return branded_path
+    except Exception as e:
+        print(f"[MEDIA] direct video prepare failed: {e}")
+        if branded_path:
+            Path(branded_path).unlink(missing_ok=True)
+        return None
+    finally:
+        if temp_input_path:
+            Path(temp_input_path).unlink(missing_ok=True)
+
+
+async def _prepare_ytdlp_video(item, settings) -> str | None:
+    if not settings.ytdlp_enabled:
+        return None
+
+    candidates: list[str] = []
+    candidates.extend(item.video_urls)
+    candidates.append(item.url)
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        try:
+            temp_downloaded = await download_video_with_ytdlp(
+                candidate,
+                ytdlp_bin=settings.ytdlp_bin,
+            )
+        except Exception as e:
+            print(f"[MEDIA] yt-dlp failed for {candidate}: {e}")
+            continue
+
+        branded_path: str | None = None
+        try:
+            branded_path = await add_branding_to_video_file(
+                input_video_path=temp_downloaded,
+                watermark_text=settings.watermark_text,
+                logo_path=settings.watermark_logo_path,
+                ffmpeg_bin=settings.ffmpeg_bin,
+                ffprobe_bin=settings.ffprobe_bin,
+            )
+            Path(temp_downloaded).unlink(missing_ok=True)
+            return branded_path
+        except Exception as e:
+            print(f"[MEDIA] yt-dlp branded video failed: {e}")
+            Path(temp_downloaded).unlink(missing_ok=True)
+            if branded_path:
+                Path(branded_path).unlink(missing_ok=True)
+
+    return None
+
+
+async def _prepare_media_video(item, settings) -> str | None:
+    direct = await _prepare_direct_video(item, settings)
+    if direct:
+        return direct
+
+    return await _prepare_ytdlp_video(item, settings)
 
 
 async def run_once(
@@ -128,22 +228,21 @@ async def run_once(
     sent = 0
     for item in to_post:
         rss_post = format_telegram_post(item)
-        channel_fallback = _append_cta(
-            _remove_source_line(rss_post),
-            settings.channel_cta_text,
-            settings.channel_cta_url,
-        )
         rss_debug_post = _append_cta(
             rss_post,
             settings.channel_cta_text,
             settings.channel_cta_url,
         )
 
+        branded_video_path: str | None = None
+
         try:
             if settings.dry_run:
                 print(f"\n--- DRY RUN RSS POST ---\n{rss_debug_post}\n")
                 if item.image_urls:
                     print(f"--- DRY RUN IMAGE URL ---\n{item.image_urls[0]}\n")
+                if item.video_urls:
+                    print(f"--- DRY RUN VIDEO URL ---\n{item.video_urls[0]}\n")
 
             if enhancer is not None:
                 ai_input = _build_ai_input(item.title, item.summary)
@@ -162,26 +261,39 @@ async def run_once(
                 if _ai_output_is_bad(ai_text):
                     raise ValueError("AI output failed quality gate")
 
-                text = _append_cta(
-                    ai_text.strip(),
-                    settings.channel_cta_text,
-                    settings.channel_cta_url,
-                )
+                text = ai_text.strip()
             else:
-                text = channel_fallback
+                text = _remove_source_line(rss_post)
 
-            photo_bytes = await _prepare_media_photo(item)
+            photo_bytes = await _prepare_media_photo(item, settings)
+            if photo_bytes is None:
+                branded_video_path = await _prepare_media_video(item, settings)
+
+            if branded_video_path:
+                text = _append_video_source_text(text, settings.video_source_text)
+
+            text = _append_cta(
+                text,
+                settings.channel_cta_text,
+                settings.channel_cta_url,
+            )
 
             if settings.dry_run:
                 print(f"\n--- DRY RUN AI POST ---\n{text}\n")
                 if photo_bytes:
                     print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
+                elif branded_video_path:
+                    print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
+                if branded_video_path:
+                    Path(branded_video_path).unlink(missing_ok=True)
                 continue
 
             if photo_bytes:
                 await tg.send_photo(settings.telegram_chat_id, photo_bytes, text)
+            elif branded_video_path:
+                await tg.send_video(settings.telegram_chat_id, branded_video_path, text)
             else:
                 await tg.send_message(settings.telegram_chat_id, text)
 
@@ -191,23 +303,47 @@ async def run_once(
         except Exception as e:
             print(f"[AI/FALLBACK] {type(e).__name__}: {e}")
 
-            photo_bytes = await _prepare_media_photo(item)
+            photo_bytes = await _prepare_media_photo(item, settings)
+            if photo_bytes is None and branded_video_path is None:
+                branded_video_path = await _prepare_media_video(item, settings)
+
+            fallback_text = _remove_source_line(rss_post)
+            if branded_video_path:
+                fallback_text = _append_video_source_text(
+                    fallback_text,
+                    settings.video_source_text,
+                )
+            fallback_text = _append_cta(
+                fallback_text,
+                settings.channel_cta_text,
+                settings.channel_cta_url,
+            )
 
             if settings.dry_run:
-                print(f"\n--- DRY RUN FALLBACK POST ---\n{channel_fallback}\n")
+                print(f"\n--- DRY RUN FALLBACK POST ---\n{fallback_text}\n")
                 if photo_bytes:
                     print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
+                elif branded_video_path:
+                    print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
+                if branded_video_path:
+                    Path(branded_video_path).unlink(missing_ok=True)
                 continue
 
             if photo_bytes:
-                await tg.send_photo(settings.telegram_chat_id, photo_bytes, channel_fallback)
+                await tg.send_photo(settings.telegram_chat_id, photo_bytes, fallback_text)
+            elif branded_video_path:
+                await tg.send_video(settings.telegram_chat_id, branded_video_path, fallback_text)
             else:
-                await tg.send_message(settings.telegram_chat_id, channel_fallback)
+                await tg.send_message(settings.telegram_chat_id, fallback_text)
 
             dedup.mark_seen(item.url)
             sent += 1
+
+        finally:
+            if branded_video_path:
+                Path(branded_video_path).unlink(missing_ok=True)
 
     return sent
 
