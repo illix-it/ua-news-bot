@@ -89,7 +89,7 @@ def load_settings() -> Settings:
     reset_dedup_on_start = _parse_bool(os.getenv("RESET_DEDUP_ON_START"), default=False)
     dry_run_mark_seen = _parse_bool(os.getenv("DRY_RUN_MARK_SEEN"), default=True)
 
-    ai_provider = os.getenv("AI_PROVIDER", "gemini").strip() or "gemini"
+    ai_provider = (os.getenv("AI_PROVIDER") or "gemini").strip() or "gemini"
     gemini_api_key = (os.getenv("GEMINI_API_KEY") or "").strip() or None
     gemini_api_keys = (os.getenv("GEMINI_API_KEYS") or "").strip()
     gemini_model = (os.getenv("GEMINI_MODEL") or "").strip() or "gemini-2.5-flash"

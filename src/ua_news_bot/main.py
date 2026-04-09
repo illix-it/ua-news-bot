@@ -13,6 +13,7 @@ from ua_news_bot.formatter import format_telegram_post
 from ua_news_bot.media.downloader import download_bytes, download_image_bytes
 from ua_news_bot.media.image_editor import add_branding_to_image
 from ua_news_bot.media.video_editor import add_branding_to_video_file
+from ua_news_bot.media.video_resolver import resolve_video_for_item
 from ua_news_bot.media.ytdlp_downloader import download_video_with_ytdlp
 from ua_news_bot.sources.suspilne import SuspilneSource
 from ua_news_bot.telegram_client import TelegramClient
@@ -20,7 +21,6 @@ from ua_news_bot.telegram_client import TelegramClient
 _B_RE = re.compile(r"<b>.*?</b>", re.DOTALL)
 _TAG_BALANCE_TAGS = ["b", "i", "u", "blockquote", "tg-spoiler"]
 _SOURCE_LINE_RE = re.compile(r"\n\nДжерело:.*$", re.DOTALL)
-_YOUTUBE_RE = re.compile(r"(youtube\.com|youtu\.be|youtube-nocookie\.com)", re.IGNORECASE)
 
 
 def _build_ai_input(title: str, summary: str | None) -> str:
@@ -58,7 +58,6 @@ def _ai_output_is_bad(text: str) -> bool:
 def _append_cta(text: str, cta_text: str, cta_url: str) -> str:
     if not cta_text or not cta_url:
         return text
-
     safe_text = html.escape(cta_text)
     cta = f'<a href="{cta_url}">{safe_text}</a>'
     return f"{text}\n\n{cta}"
@@ -92,21 +91,24 @@ async def _prepare_media_photo(item, settings) -> bytes | None:
         return None
 
 
-async def _prepare_direct_video(item, settings) -> str | None:
-    if not item.video_urls:
-        return None
+async def _brand_video_file(input_video_path: str, settings) -> str:
+    return await add_branding_to_video_file(
+        input_video_path=input_video_path,
+        watermark_text=settings.watermark_text,
+        logo_path=settings.watermark_logo_path,
+        ffmpeg_bin=settings.ffmpeg_bin,
+        ffprobe_bin=settings.ffprobe_bin,
+    )
 
-    first_url = item.video_urls[0]
-    if _YOUTUBE_RE.search(first_url):
-        return None
 
+async def _prepare_direct_video_from_url(video_url: str, referer: str, settings) -> str | None:
     temp_input_path: str | None = None
     branded_path: str | None = None
 
     try:
-        content, content_type = await download_bytes(first_url, referer=item.url, timeout=120.0)
+        content, content_type = await download_bytes(video_url, referer=referer, timeout=120.0)
         if not content_type.startswith("video/"):
-            print(f"[MEDIA] first video url is not video content-type: {content_type}")
+            print(f"[MEDIA] resolved direct video is not video content-type: {content_type}")
             return None
 
         temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -114,13 +116,7 @@ async def _prepare_direct_video(item, settings) -> str | None:
         temp_input.close()
         temp_input_path = temp_input.name
 
-        branded_path = await add_branding_to_video_file(
-            input_video_path=temp_input_path,
-            watermark_text=settings.watermark_text,
-            logo_path=settings.watermark_logo_path,
-            ffmpeg_bin=settings.ffmpeg_bin,
-            ffprobe_bin=settings.ffprobe_bin,
-        )
+        branded_path = await _brand_video_file(temp_input_path, settings)
         return branded_path
     except Exception as e:
         print(f"[MEDIA] direct video prepare failed: {e}")
@@ -132,53 +128,44 @@ async def _prepare_direct_video(item, settings) -> str | None:
             Path(temp_input_path).unlink(missing_ok=True)
 
 
-async def _prepare_ytdlp_video(item, settings) -> str | None:
+async def _prepare_ytdlp_video(video_url: str, settings) -> str | None:
     if not settings.ytdlp_enabled:
         return None
 
-    candidates: list[str] = []
-    candidates.extend(item.video_urls)
-    candidates.append(item.url)
+    temp_downloaded: str | None = None
+    branded_path: str | None = None
 
-    for candidate in candidates:
-        if not candidate:
-            continue
-
-        try:
-            temp_downloaded = await download_video_with_ytdlp(
-                candidate,
-                ytdlp_bin=settings.ytdlp_bin,
-            )
-        except Exception as e:
-            print(f"[MEDIA] yt-dlp failed for {candidate}: {e}")
-            continue
-
-        branded_path: str | None = None
-        try:
-            branded_path = await add_branding_to_video_file(
-                input_video_path=temp_downloaded,
-                watermark_text=settings.watermark_text,
-                logo_path=settings.watermark_logo_path,
-                ffmpeg_bin=settings.ffmpeg_bin,
-                ffprobe_bin=settings.ffprobe_bin,
-            )
+    try:
+        temp_downloaded = await download_video_with_ytdlp(
+            video_url,
+            ytdlp_bin=settings.ytdlp_bin,
+        )
+        branded_path = await _brand_video_file(temp_downloaded, settings)
+        return branded_path
+    except Exception as e:
+        print(f"[MEDIA] yt-dlp video prepare failed: {e}")
+        if branded_path:
+            Path(branded_path).unlink(missing_ok=True)
+        return None
+    finally:
+        if temp_downloaded:
             Path(temp_downloaded).unlink(missing_ok=True)
-            return branded_path
-        except Exception as e:
-            print(f"[MEDIA] yt-dlp branded video failed: {e}")
-            Path(temp_downloaded).unlink(missing_ok=True)
-            if branded_path:
-                Path(branded_path).unlink(missing_ok=True)
-
-    return None
 
 
 async def _prepare_media_video(item, settings) -> str | None:
-    direct = await _prepare_direct_video(item, settings)
-    if direct:
-        return direct
+    resolved = await resolve_video_for_item(item)
+    if not resolved:
+        return None
 
-    return await _prepare_ytdlp_video(item, settings)
+    print(f"[MEDIA] resolved video kind={resolved.kind} url={resolved.url}")
+
+    if resolved.kind == "direct":
+        return await _prepare_direct_video_from_url(resolved.url, item.url, settings)
+
+    if resolved.kind == "youtube":
+        return await _prepare_ytdlp_video(resolved.url, settings)
+
+    return None
 
 
 async def run_once(
