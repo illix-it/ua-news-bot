@@ -38,10 +38,10 @@ class Settings(BaseModel):
     watermark_text: str = "Smart News UA"
     watermark_logo_path: str = "data/images/smart_news_ua_logo.png"
 
-    watermark_image_logo_scale: float = 0.08
-    watermark_image_text_scale: float = 0.028
-    watermark_video_logo_scale: float = 0.08
-    watermark_video_text_scale: float = 0.028
+    watermark_image_logo_scale: float = 0.06
+    watermark_image_text_scale: float = 0.022
+    watermark_video_logo_scale: float = 0.06
+    watermark_video_text_scale: float = 0.022
 
     ytdlp_enabled: bool = False
     ytdlp_bin: str = "yt-dlp"
@@ -49,6 +49,7 @@ class Settings(BaseModel):
     video_source_text: str = "🎥 Відео: Суспільне"
 
     telegram_media_caption_limit: int = 1024
+    telegram_max_media_images: int = 4
 
     media_debug: bool = True
 
@@ -124,10 +125,10 @@ def load_settings() -> Settings:
         os.getenv("WATERMARK_LOGO_PATH") or ""
     ).strip() or "data/images/smart_news_ua_logo.png"
 
-    watermark_image_logo_scale = _parse_float(os.getenv("WATERMARK_IMAGE_LOGO_SCALE"), 0.08)
-    watermark_image_text_scale = _parse_float(os.getenv("WATERMARK_IMAGE_TEXT_SCALE"), 0.028)
-    watermark_video_logo_scale = _parse_float(os.getenv("WATERMARK_VIDEO_LOGO_SCALE"), 0.08)
-    watermark_video_text_scale = _parse_float(os.getenv("WATERMARK_VIDEO_TEXT_SCALE"), 0.028)
+    watermark_image_logo_scale = _parse_float(os.getenv("WATERMARK_IMAGE_LOGO_SCALE"), 0.06)
+    watermark_image_text_scale = _parse_float(os.getenv("WATERMARK_IMAGE_TEXT_SCALE"), 0.022)
+    watermark_video_logo_scale = _parse_float(os.getenv("WATERMARK_VIDEO_LOGO_SCALE"), 0.06)
+    watermark_video_text_scale = _parse_float(os.getenv("WATERMARK_VIDEO_TEXT_SCALE"), 0.022)
 
     ytdlp_enabled = _parse_bool(os.getenv("YTDLP_ENABLED"), default=False)
     ytdlp_bin = (os.getenv("YTDLP_BIN") or "").strip() or "yt-dlp"
@@ -138,6 +139,13 @@ def load_settings() -> Settings:
     telegram_media_caption_limit = int(caption_limit_raw) if caption_limit_raw.isdigit() else 1024
     if telegram_media_caption_limit < 200:
         telegram_media_caption_limit = 200
+
+    max_media_images_raw = (os.getenv("TELEGRAM_MAX_MEDIA_IMAGES") or "").strip()
+    telegram_max_media_images = int(max_media_images_raw) if max_media_images_raw.isdigit() else 4
+    if telegram_max_media_images < 1:
+        telegram_max_media_images = 1
+    if telegram_max_media_images > 10:
+        telegram_max_media_images = 10
 
     media_debug = _parse_bool(os.getenv("MEDIA_DEBUG"), default=True)
 
@@ -172,5 +180,6 @@ def load_settings() -> Settings:
         ytdlp_bin=ytdlp_bin,
         video_source_text=video_source_text,
         telegram_media_caption_limit=telegram_media_caption_limit,
+        telegram_max_media_images=telegram_max_media_images,
         media_debug=media_debug,
     )

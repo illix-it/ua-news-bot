@@ -119,6 +119,8 @@ async def _send_media_with_safe_caption(
 
     if media_kind == "photo":
         await tg.send_photo(chat_id, media_payload, caption)
+    elif media_kind == "album":
+        await tg.send_media_group(chat_id, media_payload, caption)
     elif media_kind == "video":
         await tg.send_video(chat_id, media_payload, caption)
     else:
@@ -128,24 +130,26 @@ async def _send_media_with_safe_caption(
         await tg.send_message(chat_id, remainder)
 
 
-async def _prepare_media_photo(item, settings) -> bytes | None:
+async def _prepare_media_photos(item, settings) -> list[bytes]:
     if not item.image_urls:
-        return None
+        return []
 
-    first_url = item.image_urls[0]
-    try:
-        content = await download_image_bytes(first_url, referer=item.url)
-        branded = add_branding_to_image(
-            image_bytes=content,
-            watermark_text=settings.watermark_text,
-            logo_path=settings.watermark_logo_path,
-            logo_scale=settings.watermark_image_logo_scale,
-            text_scale=settings.watermark_image_text_scale,
-        )
-        return branded.getvalue()
-    except Exception as e:
-        _media_log(settings, f"[MEDIA] image prepare failed: {e}")
-        return None
+    prepared: list[bytes] = []
+    for image_url in item.image_urls[: settings.telegram_max_media_images]:
+        try:
+            content = await download_image_bytes(image_url, referer=item.url)
+            branded = add_branding_to_image(
+                image_bytes=content,
+                watermark_text=settings.watermark_text,
+                logo_path=settings.watermark_logo_path,
+                logo_scale=settings.watermark_image_logo_scale,
+                text_scale=settings.watermark_image_text_scale,
+            )
+            prepared.append(branded.getvalue())
+        except Exception as e:
+            _media_log(settings, f"[MEDIA] image prepare failed for {image_url}: {e}")
+
+    return prepared
 
 
 async def _brand_video_file(input_video_path: str, settings) -> str:
@@ -286,7 +290,9 @@ async def run_once(
             if settings.dry_run:
                 print(f"\n--- DRY RUN RSS POST ---\n{rss_debug_post}\n")
                 if settings.media_debug and item.image_urls:
-                    print(f"--- DRY RUN IMAGE URL ---\n{item.image_urls[0]}\n")
+                    print(
+                        f"--- DRY RUN IMAGE URLS ---\n{list(item.image_urls[: settings.telegram_max_media_images])}\n"
+                    )
                 if settings.media_debug and item.video_urls:
                     print(f"--- DRY RUN VIDEO URL ---\n{item.video_urls[0]}\n")
 
@@ -311,8 +317,8 @@ async def run_once(
             else:
                 text = _remove_source_line(rss_post)
 
-            photo_bytes = await _prepare_media_photo(item, settings)
-            if photo_bytes is None:
+            photo_bytes_list = await _prepare_media_photos(item, settings)
+            if not photo_bytes_list:
                 branded_video_path = await _prepare_media_video(item, settings)
 
             if branded_video_path:
@@ -326,7 +332,22 @@ async def run_once(
 
             if settings.dry_run:
                 print(f"\n--- DRY RUN AI POST ---\n{text}\n")
-                if photo_bytes:
+                if len(photo_bytes_list) > 1:
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            f"album prepared with branding ({len(photo_bytes_list)} images)\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print(
+                            f"--- DRY RUN MEDIA ---\nalbum prepared with branding ({len(photo_bytes_list)} images)\n"
+                        )
+                elif len(photo_bytes_list) == 1:
                     if settings.media_debug:
                         cap, rest = _split_media_caption_and_remainder(
                             text,
@@ -358,12 +379,21 @@ async def run_once(
                     Path(branded_video_path).unlink(missing_ok=True)
                 continue
 
-            if photo_bytes:
+            if len(photo_bytes_list) > 1:
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="album",
+                    media_payload=photo_bytes_list,
+                    text=text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
+            elif len(photo_bytes_list) == 1:
                 await _send_media_with_safe_caption(
                     tg=tg,
                     chat_id=settings.telegram_chat_id,
                     media_kind="photo",
-                    media_payload=photo_bytes,
+                    media_payload=photo_bytes_list[0],
                     text=text,
                     caption_limit=settings.telegram_media_caption_limit,
                 )
@@ -385,8 +415,8 @@ async def run_once(
         except Exception as e:
             print(f"[AI/FALLBACK] {type(e).__name__}: {e}")
 
-            photo_bytes = await _prepare_media_photo(item, settings)
-            if photo_bytes is None and branded_video_path is None:
+            photo_bytes_list = await _prepare_media_photos(item, settings)
+            if not photo_bytes_list and branded_video_path is None:
                 branded_video_path = await _prepare_media_video(item, settings)
 
             fallback_text = _remove_source_line(rss_post)
@@ -403,7 +433,22 @@ async def run_once(
 
             if settings.dry_run:
                 print(f"\n--- DRY RUN FALLBACK POST ---\n{fallback_text}\n")
-                if photo_bytes:
+                if len(photo_bytes_list) > 1:
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            fallback_text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            f"album prepared with branding ({len(photo_bytes_list)} images)\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print(
+                            f"--- DRY RUN MEDIA ---\nalbum prepared with branding ({len(photo_bytes_list)} images)\n"
+                        )
+                elif len(photo_bytes_list) == 1:
                     if settings.media_debug:
                         cap, rest = _split_media_caption_and_remainder(
                             fallback_text,
@@ -435,12 +480,21 @@ async def run_once(
                     Path(branded_video_path).unlink(missing_ok=True)
                 continue
 
-            if photo_bytes:
+            if len(photo_bytes_list) > 1:
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="album",
+                    media_payload=photo_bytes_list,
+                    text=fallback_text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
+            elif len(photo_bytes_list) == 1:
                 await _send_media_with_safe_caption(
                     tg=tg,
                     chat_id=settings.telegram_chat_id,
                     media_kind="photo",
-                    media_payload=photo_bytes,
+                    media_payload=photo_bytes_list[0],
                     text=fallback_text,
                     caption_limit=settings.telegram_media_caption_limit,
                 )
