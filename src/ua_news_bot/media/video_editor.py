@@ -64,7 +64,8 @@ async def add_branding_to_video_file(
     font_path: str | None = None,
     logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left",
     logo_opacity: float = 0.9,
-    logo_scale: float = 0.10,
+    logo_scale: float = 0.08,
+    text_scale: float = 0.028,
     ffmpeg_bin: str = "ffmpeg",
     ffprobe_bin: str = "ffprobe",
 ) -> str:
@@ -91,10 +92,10 @@ async def add_branding_to_video_file(
             f"fontfile='{font_file}':"
             f"text='{text}':"
             f"fontcolor=white:"
-            f"fontsize=(w*0.035):"
+            f"fontsize=(w*{text_scale}):"
             f"box=1:"
-            f"boxcolor=black@0.35:"
-            f"boxborderw=8:"
+            f"boxcolor=black@0.30:"
+            f"boxborderw=6:"
             f"x=w-tw-20:"
             f"y=h-th-20[v]"
         )

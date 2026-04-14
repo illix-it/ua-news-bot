@@ -79,7 +79,6 @@ def _split_media_caption_and_remainder(text: str, limit: int) -> tuple[str, str 
         return cleaned, None
 
     cut = cleaned[:limit]
-
     breakpoints = [
         cut.rfind("\n\n"),
         cut.rfind("\n"),
@@ -100,6 +99,11 @@ def _split_media_caption_and_remainder(text: str, limit: int) -> tuple[str, str 
         caption = caption.rstrip() + "…"
 
     return caption, (remainder or None)
+
+
+def _media_log(settings, message: str) -> None:
+    if settings.media_debug:
+        print(message)
 
 
 async def _send_media_with_safe_caption(
@@ -135,10 +139,12 @@ async def _prepare_media_photo(item, settings) -> bytes | None:
             image_bytes=content,
             watermark_text=settings.watermark_text,
             logo_path=settings.watermark_logo_path,
+            logo_scale=settings.watermark_image_logo_scale,
+            text_scale=settings.watermark_image_text_scale,
         )
         return branded.getvalue()
     except Exception as e:
-        print(f"[MEDIA] image prepare failed: {e}")
+        _media_log(settings, f"[MEDIA] image prepare failed: {e}")
         return None
 
 
@@ -147,6 +153,8 @@ async def _brand_video_file(input_video_path: str, settings) -> str:
         input_video_path=input_video_path,
         watermark_text=settings.watermark_text,
         logo_path=settings.watermark_logo_path,
+        logo_scale=settings.watermark_video_logo_scale,
+        text_scale=settings.watermark_video_text_scale,
         ffmpeg_bin=settings.ffmpeg_bin,
         ffprobe_bin=settings.ffprobe_bin,
     )
@@ -159,7 +167,7 @@ async def _prepare_direct_video_from_url(video_url: str, referer: str, settings)
     try:
         content, content_type = await download_bytes(video_url, referer=referer, timeout=120.0)
         if not content_type.startswith("video/"):
-            print(f"[MEDIA] resolved direct video is not video content-type: {content_type}")
+            _media_log(settings, f"[MEDIA] direct video skipped: content-type={content_type}")
             return None
 
         temp_input = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -170,7 +178,7 @@ async def _prepare_direct_video_from_url(video_url: str, referer: str, settings)
         branded_path = await _brand_video_file(temp_input_path, settings)
         return branded_path
     except Exception as e:
-        print(f"[MEDIA] direct video prepare failed: {e}")
+        _media_log(settings, f"[MEDIA] direct video prepare failed: {e}")
         if branded_path:
             Path(branded_path).unlink(missing_ok=True)
         return None
@@ -194,7 +202,7 @@ async def _prepare_ytdlp_video(video_url: str, settings) -> str | None:
         branded_path = await _brand_video_file(temp_downloaded, settings)
         return branded_path
     except Exception as e:
-        print(f"[MEDIA] yt-dlp video prepare failed: {e}")
+        _media_log(settings, f"[MEDIA] yt-dlp video prepare failed: {e}")
         if branded_path:
             Path(branded_path).unlink(missing_ok=True)
         return None
@@ -208,7 +216,7 @@ async def _prepare_media_video(item, settings) -> str | None:
     if not resolved:
         return None
 
-    print(f"[MEDIA] resolved video kind={resolved.kind} url={resolved.url}")
+    _media_log(settings, f"[MEDIA] resolved video kind={resolved.kind} url={resolved.url}")
 
     if resolved.kind == "direct":
         return await _prepare_direct_video_from_url(resolved.url, item.url, settings)
@@ -277,9 +285,9 @@ async def run_once(
         try:
             if settings.dry_run:
                 print(f"\n--- DRY RUN RSS POST ---\n{rss_debug_post}\n")
-                if item.image_urls:
+                if settings.media_debug and item.image_urls:
                     print(f"--- DRY RUN IMAGE URL ---\n{item.image_urls[0]}\n")
-                if item.video_urls:
+                if settings.media_debug and item.video_urls:
                     print(f"--- DRY RUN VIDEO URL ---\n{item.video_urls[0]}\n")
 
             if enhancer is not None:
@@ -319,25 +327,31 @@ async def run_once(
             if settings.dry_run:
                 print(f"\n--- DRY RUN AI POST ---\n{text}\n")
                 if photo_bytes:
-                    cap, rest = _split_media_caption_and_remainder(
-                        text,
-                        settings.telegram_media_caption_limit,
-                    )
-                    print(
-                        f"--- DRY RUN MEDIA ---\n"
-                        f"photo prepared with branding\n"
-                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
-                    )
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            "photo prepared with branding\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
                 elif branded_video_path:
-                    cap, rest = _split_media_caption_and_remainder(
-                        text,
-                        settings.telegram_media_caption_limit,
-                    )
-                    print(
-                        f"--- DRY RUN MEDIA ---\n"
-                        f"video prepared with branding\n"
-                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
-                    )
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            "video prepared with branding\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
                 if branded_video_path:
@@ -390,25 +404,31 @@ async def run_once(
             if settings.dry_run:
                 print(f"\n--- DRY RUN FALLBACK POST ---\n{fallback_text}\n")
                 if photo_bytes:
-                    cap, rest = _split_media_caption_and_remainder(
-                        fallback_text,
-                        settings.telegram_media_caption_limit,
-                    )
-                    print(
-                        f"--- DRY RUN MEDIA ---\n"
-                        f"photo prepared with branding\n"
-                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
-                    )
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            fallback_text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            "photo prepared with branding\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
                 elif branded_video_path:
-                    cap, rest = _split_media_caption_and_remainder(
-                        fallback_text,
-                        settings.telegram_media_caption_limit,
-                    )
-                    print(
-                        f"--- DRY RUN MEDIA ---\n"
-                        f"video prepared with branding\n"
-                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
-                    )
+                    if settings.media_debug:
+                        cap, rest = _split_media_caption_and_remainder(
+                            fallback_text,
+                            settings.telegram_media_caption_limit,
+                        )
+                        print(
+                            "--- DRY RUN MEDIA ---\n"
+                            "video prepared with branding\n"
+                            f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                        )
+                    else:
+                        print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
                 if branded_video_path:

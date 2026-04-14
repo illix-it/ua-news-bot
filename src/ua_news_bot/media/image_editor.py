@@ -37,7 +37,8 @@ def add_branding_to_image(
     logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left",
     text_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "bottom-right",
     logo_opacity: float = 0.9,
-    logo_scale: float = 0.11,
+    logo_scale: float = 0.08,
+    text_scale: float = 0.028,
     margin: int = 20,
 ) -> BytesIO:
     image = Image.open(BytesIO(image_bytes)).convert("RGBA")
@@ -46,7 +47,7 @@ def add_branding_to_image(
 
     font_file = Path(font_path) if font_path else DEFAULT_FONT_PATH
 
-    font_size = max(22, int(image.width * 0.038))
+    font_size = max(18, int(image.width * text_scale))
     try:
         font = ImageFont.truetype(str(font_file), font_size)
     except OSError:
@@ -65,8 +66,8 @@ def add_branding_to_image(
         text_position,
     )
 
-    shadow_fill = (0, 0, 0, 180)
-    text_fill = (255, 255, 255, 225)
+    shadow_fill = (0, 0, 0, 160)
+    text_fill = (255, 255, 255, 215)
     shadow_offset = 2
 
     draw.text(
@@ -87,7 +88,7 @@ def add_branding_to_image(
         try:
             logo = Image.open(logo_file).convert("RGBA")
 
-            logo_w = max(48, int(image.width * logo_scale))
+            logo_w = max(40, int(image.width * logo_scale))
             ratio = logo.height / logo.width
             logo_h = int(logo_w * ratio)
             logo = logo.resize((logo_w, logo_h), Image.LANCZOS)

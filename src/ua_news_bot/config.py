@@ -38,12 +38,19 @@ class Settings(BaseModel):
     watermark_text: str = "Smart News UA"
     watermark_logo_path: str = "data/images/smart_news_ua_logo.png"
 
+    watermark_image_logo_scale: float = 0.08
+    watermark_image_text_scale: float = 0.028
+    watermark_video_logo_scale: float = 0.08
+    watermark_video_text_scale: float = 0.028
+
     ytdlp_enabled: bool = False
     ytdlp_bin: str = "yt-dlp"
 
     video_source_text: str = "🎥 Відео: Суспільне"
 
     telegram_media_caption_limit: int = 1024
+
+    media_debug: bool = True
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -55,6 +62,15 @@ def _parse_bool(value: str | None, default: bool) -> bool:
     if v in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+def _parse_float(value: str | None, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value.strip())
+    except Exception:
+        return default
 
 
 def load_settings() -> Settings:
@@ -108,6 +124,11 @@ def load_settings() -> Settings:
         os.getenv("WATERMARK_LOGO_PATH") or ""
     ).strip() or "data/images/smart_news_ua_logo.png"
 
+    watermark_image_logo_scale = _parse_float(os.getenv("WATERMARK_IMAGE_LOGO_SCALE"), 0.08)
+    watermark_image_text_scale = _parse_float(os.getenv("WATERMARK_IMAGE_TEXT_SCALE"), 0.028)
+    watermark_video_logo_scale = _parse_float(os.getenv("WATERMARK_VIDEO_LOGO_SCALE"), 0.08)
+    watermark_video_text_scale = _parse_float(os.getenv("WATERMARK_VIDEO_TEXT_SCALE"), 0.028)
+
     ytdlp_enabled = _parse_bool(os.getenv("YTDLP_ENABLED"), default=False)
     ytdlp_bin = (os.getenv("YTDLP_BIN") or "").strip() or "yt-dlp"
 
@@ -117,6 +138,8 @@ def load_settings() -> Settings:
     telegram_media_caption_limit = int(caption_limit_raw) if caption_limit_raw.isdigit() else 1024
     if telegram_media_caption_limit < 200:
         telegram_media_caption_limit = 200
+
+    media_debug = _parse_bool(os.getenv("MEDIA_DEBUG"), default=True)
 
     return Settings(
         telegram_bot_token=token,
@@ -141,8 +164,13 @@ def load_settings() -> Settings:
         ffprobe_bin=ffprobe_bin,
         watermark_text=watermark_text,
         watermark_logo_path=watermark_logo_path,
+        watermark_image_logo_scale=watermark_image_logo_scale,
+        watermark_image_text_scale=watermark_image_text_scale,
+        watermark_video_logo_scale=watermark_video_logo_scale,
+        watermark_video_text_scale=watermark_video_text_scale,
         ytdlp_enabled=ytdlp_enabled,
         ytdlp_bin=ytdlp_bin,
         video_source_text=video_source_text,
         telegram_media_caption_limit=telegram_media_caption_limit,
+        media_debug=media_debug,
     )
