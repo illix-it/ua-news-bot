@@ -73,6 +73,57 @@ def _remove_source_line(text: str) -> str:
     return _SOURCE_LINE_RE.sub("", text).strip()
 
 
+def _split_media_caption_and_remainder(text: str, limit: int) -> tuple[str, str | None]:
+    cleaned = text.strip()
+    if len(cleaned) <= limit:
+        return cleaned, None
+
+    cut = cleaned[:limit]
+
+    breakpoints = [
+        cut.rfind("\n\n"),
+        cut.rfind("\n"),
+        cut.rfind(". "),
+        cut.rfind("! "),
+        cut.rfind("? "),
+        cut.rfind(" "),
+    ]
+    split_at = max(breakpoints)
+
+    if split_at < max(150, limit // 3):
+        split_at = limit
+
+    caption = cleaned[:split_at].rstrip()
+    remainder = cleaned[split_at:].lstrip()
+
+    if remainder and not caption.endswith(("…", ".", "!", "?", "”", '"', "»")):
+        caption = caption.rstrip() + "…"
+
+    return caption, (remainder or None)
+
+
+async def _send_media_with_safe_caption(
+    *,
+    tg: TelegramClient,
+    chat_id: str,
+    media_kind: str,
+    media_payload,
+    text: str,
+    caption_limit: int,
+) -> None:
+    caption, remainder = _split_media_caption_and_remainder(text, caption_limit)
+
+    if media_kind == "photo":
+        await tg.send_photo(chat_id, media_payload, caption)
+    elif media_kind == "video":
+        await tg.send_video(chat_id, media_payload, caption)
+    else:
+        raise ValueError(f"Unsupported media_kind: {media_kind}")
+
+    if remainder:
+        await tg.send_message(chat_id, remainder)
+
+
 async def _prepare_media_photo(item, settings) -> bytes | None:
     if not item.image_urls:
         return None
@@ -268,9 +319,25 @@ async def run_once(
             if settings.dry_run:
                 print(f"\n--- DRY RUN AI POST ---\n{text}\n")
                 if photo_bytes:
-                    print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
+                    cap, rest = _split_media_caption_and_remainder(
+                        text,
+                        settings.telegram_media_caption_limit,
+                    )
+                    print(
+                        f"--- DRY RUN MEDIA ---\n"
+                        f"photo prepared with branding\n"
+                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                    )
                 elif branded_video_path:
-                    print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
+                    cap, rest = _split_media_caption_and_remainder(
+                        text,
+                        settings.telegram_media_caption_limit,
+                    )
+                    print(
+                        f"--- DRY RUN MEDIA ---\n"
+                        f"video prepared with branding\n"
+                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                    )
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
                 if branded_video_path:
@@ -278,9 +345,23 @@ async def run_once(
                 continue
 
             if photo_bytes:
-                await tg.send_photo(settings.telegram_chat_id, photo_bytes, text)
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="photo",
+                    media_payload=photo_bytes,
+                    text=text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
             elif branded_video_path:
-                await tg.send_video(settings.telegram_chat_id, branded_video_path, text)
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="video",
+                    media_payload=branded_video_path,
+                    text=text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
             else:
                 await tg.send_message(settings.telegram_chat_id, text)
 
@@ -309,9 +390,25 @@ async def run_once(
             if settings.dry_run:
                 print(f"\n--- DRY RUN FALLBACK POST ---\n{fallback_text}\n")
                 if photo_bytes:
-                    print("--- DRY RUN MEDIA ---\nphoto prepared with branding\n")
+                    cap, rest = _split_media_caption_and_remainder(
+                        fallback_text,
+                        settings.telegram_media_caption_limit,
+                    )
+                    print(
+                        f"--- DRY RUN MEDIA ---\n"
+                        f"photo prepared with branding\n"
+                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                    )
                 elif branded_video_path:
-                    print("--- DRY RUN MEDIA ---\nvideo prepared with branding\n")
+                    cap, rest = _split_media_caption_and_remainder(
+                        fallback_text,
+                        settings.telegram_media_caption_limit,
+                    )
+                    print(
+                        f"--- DRY RUN MEDIA ---\n"
+                        f"video prepared with branding\n"
+                        f"caption_len={len(cap)} overflow={'yes' if rest else 'no'}\n"
+                    )
                 if settings.dry_run_mark_seen:
                     dedup.mark_seen(item.url)
                 if branded_video_path:
@@ -319,9 +416,23 @@ async def run_once(
                 continue
 
             if photo_bytes:
-                await tg.send_photo(settings.telegram_chat_id, photo_bytes, fallback_text)
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="photo",
+                    media_payload=photo_bytes,
+                    text=fallback_text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
             elif branded_video_path:
-                await tg.send_video(settings.telegram_chat_id, branded_video_path, fallback_text)
+                await _send_media_with_safe_caption(
+                    tg=tg,
+                    chat_id=settings.telegram_chat_id,
+                    media_kind="video",
+                    media_payload=branded_video_path,
+                    text=fallback_text,
+                    caption_limit=settings.telegram_media_caption_limit,
+                )
             else:
                 await tg.send_message(settings.telegram_chat_id, fallback_text)
 

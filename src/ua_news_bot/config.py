@@ -43,6 +43,8 @@ class Settings(BaseModel):
 
     video_source_text: str = "🎥 Відео: Суспільне"
 
+    telegram_media_caption_limit: int = 1024
+
 
 def _parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -111,6 +113,11 @@ def load_settings() -> Settings:
 
     video_source_text = (os.getenv("VIDEO_SOURCE_TEXT") or "").strip() or "🎥 Відео: Суспільне"
 
+    caption_limit_raw = (os.getenv("TELEGRAM_MEDIA_CAPTION_LIMIT") or "").strip()
+    telegram_media_caption_limit = int(caption_limit_raw) if caption_limit_raw.isdigit() else 1024
+    if telegram_media_caption_limit < 200:
+        telegram_media_caption_limit = 200
+
     return Settings(
         telegram_bot_token=token,
         telegram_chat_id=chat_id,
@@ -137,4 +144,5 @@ def load_settings() -> Settings:
         ytdlp_enabled=ytdlp_enabled,
         ytdlp_bin=ytdlp_bin,
         video_source_text=video_source_text,
+        telegram_media_caption_limit=telegram_media_caption_limit,
     )
