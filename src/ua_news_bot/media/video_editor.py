@@ -64,8 +64,9 @@ async def add_branding_to_video_file(
     font_path: str | None = None,
     logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left",
     logo_opacity: float = 0.9,
-    logo_scale: float = 0.08,
-    text_scale: float = 0.028,
+    logo_scale: float = 0.06,
+    text_scale: float = 0.022,
+    margin: int = 32,
     ffmpeg_bin: str = "ffmpeg",
     ffprobe_bin: str = "ffprobe",
 ) -> str:
@@ -96,8 +97,8 @@ async def add_branding_to_video_file(
             f"box=1:"
             f"boxcolor=black@0.30:"
             f"boxborderw=6:"
-            f"x=w-tw-20:"
-            f"y=h-th-20[v]"
+            f"x=w-tw-{margin}:"
+            f"y=h-th-{margin}[v]"
         )
     else:
         filter_complex += "[v]"

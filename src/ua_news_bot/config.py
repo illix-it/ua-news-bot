@@ -37,6 +37,7 @@ class Settings(BaseModel):
 
     watermark_text: str = "Smart News UA"
     watermark_logo_path: str = "data/images/smart_news_ua_logo.png"
+    watermark_margin: int = 32
 
     watermark_image_logo_scale: float = 0.06
     watermark_image_text_scale: float = 0.022
@@ -50,6 +51,7 @@ class Settings(BaseModel):
 
     telegram_media_caption_limit: int = 1024
     telegram_max_media_images: int = 4
+    max_video_upload_mb: int = 45
 
     media_debug: bool = True
 
@@ -125,6 +127,11 @@ def load_settings() -> Settings:
         os.getenv("WATERMARK_LOGO_PATH") or ""
     ).strip() or "data/images/smart_news_ua_logo.png"
 
+    margin_raw = (os.getenv("WATERMARK_MARGIN") or "").strip()
+    watermark_margin = int(margin_raw) if margin_raw.isdigit() else 32
+    if watermark_margin < 8:
+        watermark_margin = 8
+
     watermark_image_logo_scale = _parse_float(os.getenv("WATERMARK_IMAGE_LOGO_SCALE"), 0.06)
     watermark_image_text_scale = _parse_float(os.getenv("WATERMARK_IMAGE_TEXT_SCALE"), 0.022)
     watermark_video_logo_scale = _parse_float(os.getenv("WATERMARK_VIDEO_LOGO_SCALE"), 0.06)
@@ -146,6 +153,11 @@ def load_settings() -> Settings:
         telegram_max_media_images = 1
     if telegram_max_media_images > 10:
         telegram_max_media_images = 10
+
+    max_video_upload_mb_raw = (os.getenv("MAX_VIDEO_UPLOAD_MB") or "").strip()
+    max_video_upload_mb = int(max_video_upload_mb_raw) if max_video_upload_mb_raw.isdigit() else 45
+    if max_video_upload_mb < 5:
+        max_video_upload_mb = 5
 
     media_debug = _parse_bool(os.getenv("MEDIA_DEBUG"), default=True)
 
@@ -172,6 +184,7 @@ def load_settings() -> Settings:
         ffprobe_bin=ffprobe_bin,
         watermark_text=watermark_text,
         watermark_logo_path=watermark_logo_path,
+        watermark_margin=watermark_margin,
         watermark_image_logo_scale=watermark_image_logo_scale,
         watermark_image_text_scale=watermark_image_text_scale,
         watermark_video_logo_scale=watermark_video_logo_scale,
@@ -181,5 +194,6 @@ def load_settings() -> Settings:
         video_source_text=video_source_text,
         telegram_media_caption_limit=telegram_media_caption_limit,
         telegram_max_media_images=telegram_max_media_images,
+        max_video_upload_mb=max_video_upload_mb,
         media_debug=media_debug,
     )

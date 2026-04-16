@@ -37,9 +37,9 @@ def add_branding_to_image(
     logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left",
     text_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "bottom-right",
     logo_opacity: float = 0.9,
-    logo_scale: float = 0.08,
-    text_scale: float = 0.028,
-    margin: int = 20,
+    logo_scale: float = 0.06,
+    text_scale: float = 0.022,
+    margin: int = 32,
 ) -> BytesIO:
     image = Image.open(BytesIO(image_bytes)).convert("RGBA")
     layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
